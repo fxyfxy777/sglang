@@ -1,0 +1,66 @@
+global:
+  port: 3015
+  health_url: "http://127.0.0.1:3015/health"
+  server_ready_timeout: 300   # 等待服务启动最长秒数
+  shutdown_wait: 20           # kill server 后等待 GPU 显存释放的秒数
+  results_dir: "./results"    # 结果目录（相对于本文件所在目录）
+
+# ── 说明 ──────────────────────────────────────────────────────────────────────
+# server: 启动服务的 shell 命令（不需要加 &，脚本自动后台化）
+# infer:  压测命令（不需要加 & 和文件重定向，脚本自动捕获输出）
+# server 相同时可以写一样的命令，脚本每组实验都会重启服务
+# ─────────────────────────────────────────────────────────────────────────────
+
+experiments:
+
+  - name: fp8_c64_n64
+    server: |
+      export CUDA_VISIBLE_DEVICES=0,1,2,3
+      export PYTHONPATH=/workspace3/fxy/sglang/python:$PYTHONPATH
+      export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libstdc++.so.6
+      python -m sglang.launch_server \
+          --model-path /workspace3/fxy/models/GLM-4.5-Air-FP8 \
+          --host 0.0.0.0 --port 3015 \
+          --tensor-parallel-size 4 \
+          --max-running-requests 512 \
+          --context-length 32768
+    infer: |
+      /root/miniconda3/envs/fxy_sglang/bin/python \
+          /workspace3/fxy/FastDeploy/benchmarks/benchmark_serving.py \
+          --backend openai-chat \
+          --model GLM-4.5-Air \
+          --endpoint /v1/chat/completions \
+          --host 127.0.0.1 --port 3015 \
+          --dataset-name EBChat \
+          --dataset-path /workspace3/fxy/sglang/debug/0724_ShareGPT_range_1800_3000_num_5000_FD.jsonl \
+          --hyperparameter-path /workspace3/fxy/sglang/debug/request.yaml \
+          --percentile-metrics ttft,tpot,itl,e2el,s_ttft,s_itl,s_e2el,s_decode,input_len,s_input_len,output_len \
+          --metric-percentiles 80,95,99,99.9,99.95,99.99 \
+          --num-prompts 64 \
+          --max-concurrency 64
+
+  - name: fp8_c512_n512
+    server: |
+      export CUDA_VISIBLE_DEVICES=0,1,2,3
+      export PYTHONPATH=/workspace3/fxy/sglang/python:$PYTHONPATH
+      export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libstdc++.so.6
+      python -m sglang.launch_server \
+          --model-path /workspace3/fxy/models/GLM-4.5-Air-FP8 \
+          --host 0.0.0.0 --port 3015 \
+          --tensor-parallel-size 4 \
+          --max-running-requests 512 \
+          --context-length 32768
+    infer: |
+      /root/miniconda3/envs/fxy_sglang/bin/python \
+          /workspace3/fxy/FastDeploy/benchmarks/benchmark_serving.py \
+          --backend openai-chat \
+          --model GLM-4.5-Air \
+          --endpoint /v1/chat/completions \
+          --host 127.0.0.1 --port 3015 \
+          --dataset-name EBChat \
+          --dataset-path /workspace3/fxy/sglang/debug/0724_ShareGPT_range_1800_3000_num_5000_FD.jsonl \
+          --hyperparameter-path /workspace3/fxy/sglang/debug/request.yaml \
+          --percentile-metrics ttft,tpot,itl,e2el,s_ttft,s_itl,s_e2el,s_decode,input_len,s_input_len,output_len \
+          --metric-percentiles 80,95,99,99.9,99.95,99.99 \
+          --num-prompts 512 \
+          --max-concurrency 512
