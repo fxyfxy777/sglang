@@ -2394,6 +2394,34 @@ class ModelRunner(ModelRunnerKVCacheMixin):
     ) -> ModelRunnerOutput:
         self.forward_pass_id += 1
 
+        import os, torch
+        _bs = forward_batch.batch_size
+        _mode = forward_batch.forward_mode
+        _seq_sum = int(forward_batch.seq_lens_sum) if _bs > 0 else 0
+        _avg_seq = _seq_sum // _bs if _bs > 0 else 0
+        
+
+        # --- profile ---
+        _pi = int(os.getenv("PROFILE_ITERS", "0"))
+        _is_decode = _mode.is_decode()
+        if _pi > 0:
+            logger.info(
+                f"[forward] pass={self.forward_pass_id} mode={_mode} bs={_bs} avg_seq={_avg_seq} sum_seq={_seq_sum}"
+            )
+            torch.cuda.nvtx.range_push(
+                f"forward pass={self.forward_pass_id}"
+                f" mode={_mode}"
+                f" bs={_bs}"
+                f" avg_seq={_avg_seq}"
+                f" sum_seq={_seq_sum}"
+            )
+            if _is_decode and self._prof_state < 2 and _bs >= 24:
+                if self._prof_state == 0:
+                    torch.cuda.cudart().cudaProfilerStart()
+                    self._prof_state = 1
+                    logger.info("[Profile] >>> START")
+        # --- end profile pre ---
+
         with get_global_expert_distribution_recorder().with_forward_pass(
             self.forward_pass_id,
             forward_batch,
@@ -2438,7 +2466,20 @@ class ModelRunner(ModelRunnerKVCacheMixin):
         if self.eplb_manager is not None:
             self.eplb_manager.on_forward_pass_end()
 
+        # --- profile post ---
+        if _pi > 0:
+            if _is_decode and self._prof_state == 1 and _bs >= 24:
+                self._prof_cnt += 1
+                if self._prof_cnt >= _pi:
+                    torch.cuda.cudart().cudaProfilerStop()
+                    self._prof_state = 2
+                    logger.info(f"[Profile] <<< STOP after {self._prof_cnt} steps")
+            torch.cuda.nvtx.range_pop()
+        # --- end profile post ---
         return output
+
+    _prof_cnt: int = 0
+    _prof_state: int = 0  # 0=waiting, 1=capturing, 2=done
 
     def _forward_raw(
         self,
